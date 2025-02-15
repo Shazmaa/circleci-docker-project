@@ -18,13 +18,13 @@ jobs:
       - setup_remote_docker  # Enable Docker commands
       - run:
           name: Build Docker Image
-          command: docker build -t shazmaa/circleci-docker-project .
+          command: docker build -t shazmaa/circleci-docker-project:latest .
       - run:
           name: Login to Docker Hub
-          command: echo $DOCKER_PASS | docker login -u shazmaa --password-stdin
+          command: echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
       - run:
           name: Push Docker Image
-          command: docker push shazmaa/circleci-docker-project
+          command: docker push shazmaa/circleci-docker-project:latest
 
 workflows:
   version: 2
