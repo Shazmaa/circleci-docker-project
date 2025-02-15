@@ -1,0 +1,43 @@
+version: 2.1
+executors:
+  docker-executor:
+    docker:
+      - image: circleci/node:14
+
+jobs:
+  build:
+    executor: docker-executor
+    steps:
+      - checkout
+      - run: echo "Building the project..."
+      - setup_remote_docker
+      - run: docker build -t ghcr.io/Shazmaa/circleci-docker-project .
+  
+test:
+    executor: docker-executor
+    steps:
+      - checkout
+      - run: echo "Running tests..."
+
+  push-docker-image:
+    executor: docker-executor
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Push Docker image
+          command: |
+            echo "Pushing Docker image to GitHub Container Registry..."
+            docker push ghcr.io/Shazmaa/circleci-docker-project
+
+workflows:
+  version: 2
+  build-test-push:
+    jobs:
+      - build
+      - test:
+          requires:
+            - build
+      - push-docker-image:
+          requires:
+            - test
