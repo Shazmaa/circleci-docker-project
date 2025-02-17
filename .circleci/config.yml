@@ -3,22 +3,29 @@ version: 2.1
 jobs:
   build:
     docker:
-      - image: circleci/node:14  # Use Node.js image
+      - image: circleci/node:14
     steps:
-      - checkout  # Checkout the code from GitHub
+      - checkout
       - run: echo "Building the application..."
-      - run: npm install  # Install dependencies
-      - run: npm test  # Run tests
+      - run: npm install
+      - run: npm test
 
   docker_build:
     docker:
-      - image: docker:19.03.12  # Use Docker image
+      - image: docker:19.03.12
     steps:
       - checkout
-      - setup_remote_docker  # Enable Docker commands
+      - setup_remote_docker
       - run:
           name: Build Docker Image
           command: docker build -t shazmaa/circleci-docker-project:latest .
+
+  docker_push:
+    docker:
+      - image: docker:19.03.12
+    steps:
+      - checkout
+      - setup_remote_docker
       - run:
           name: Login to Docker Hub
           command: echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
@@ -34,3 +41,6 @@ workflows:
       - docker_build:
           requires:
             - build
+      - docker_push:
+          requires:
+            - docker_build
