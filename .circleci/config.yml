@@ -1,17 +1,14 @@
 version: 2.1
 
+# Define orbs for additional functionality
+orbs:
+  sonarcloud: sonarsource/sonarcloud@2.0.0
+  dependency-check: owasp/dependency-check@1.0.3
+
 executors:
   docker-executor:
     docker:
-      - image: circleci/python:3.8
-  
-  sonar-executor:
-    docker:
-      - image: sonarsource/sonar-scanner-cli
-  
-  dependency-executor:
-    docker:
-      - image: owasp/dependency-check
+      - image: cimg/python:3.8
   
   docker-executor-with-privileges:
     docker:
@@ -51,45 +48,32 @@ jobs:
             - venv
   
   sonar_scan:
-    executor: sonar-executor
+    executor: docker-executor
     steps:
       - checkout
       - attach_workspace:
           at: .
-      - run:
-          name: Run SonarQube Analysis
-          command: |
-            sonar-scanner \
-              -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-              -Dsonar.organization=${SONAR_ORG} \
-              -Dsonar.host.url=${SONAR_HOST_URL} \
-              -Dsonar.login=${SONAR_TOKEN} \
-              -Dsonar.python.coverage.reportPaths=coverage.xml \
-              -Dsonar.sources=.
-      - persist_to_workspace:
-          root: .
-          paths:
-            - sonar-report.json
+      - sonarcloud/scan:
+          project_key: ${SONAR_PROJECT_KEY}
+          organization: ${SONAR_ORG}
   
   dependency_check:
-    executor: dependency-executor
+    executor: docker-executor
     steps:
       - checkout
       - attach_workspace:
           at: .
-      - run:
-          name: Run OWASP Dependency Check
-          command: |
-            mkdir -p reports
-            dependency-check --scan ./ --format "HTML" --out reports/dependency-report.html --format "JSON" --out reports/dependency-report.json
+      - dependency-check/scan:
+          project: your_project_name
+          output-format: "HTML,JSON"
       - store_artifacts:
-          path: reports/dependency-report.html
+          path: /home/circleci/project/owasp-dependency-check-report.html
           destination: dependency-report.html
       - persist_to_workspace:
           root: .
           paths:
-            - reports/dependency-report.html
-            - reports/dependency-report.json
+            - owasp-dependency-check-report.html
+            - dependency-check-report.json
   
   unit_test:
     executor: docker-executor
@@ -126,8 +110,8 @@ jobs:
       - attach_workspace:
           at: .
       - store_artifacts:
-          path: reports
-          destination: reports
+          path: owasp-dependency-check-report.html
+          destination: dependency-report.html
       - store_artifacts:
           path: test-reports
           destination: test-reports
@@ -135,8 +119,8 @@ jobs:
           name: Send Notification
           command: |
             echo "Reports available at:"
-            echo "- Dependency Report: ${CIRCLE_BUILD_URL}/artifacts/reports/dependency-report.html"
-            echo "- Test Report: ${CIRCLE_BUILD_URL}/artifacts/test-reports/test-report.xml"
+            echo "- Dependency Report: ${CIRCLE_BUILD_URL}/artifacts/0/dependency-report.html"
+            echo "- Test Report: ${CIRCLE_BUILD_URL}/artifacts/0/test-reports/test-report.xml"
             
             if [ -f test-reports/test-failure ]; then
               exit 1
@@ -153,7 +137,11 @@ jobs:
       - run:
           name: Extract Project Name
           command: |
-            PROJECT_NAME=$(python -c "import json; print(json.load(open('package.json'))['name'])")
+            if [ -f package.json ]; then
+              PROJECT_NAME=$(python -c "import json; print(json.load(open('package.json'))['name'])")
+            else
+              PROJECT_NAME=$(basename $PWD)
+            fi
             echo "export PROJECT_NAME=$PROJECT_NAME" >> $BASH_ENV
       - run:
           name: Build Docker Image
@@ -178,6 +166,7 @@ workflows:
       - sonar_scan:
           requires:
             - unit_test
+          context: SonarCloud
       - dependency_check:
           requires:
             - build
