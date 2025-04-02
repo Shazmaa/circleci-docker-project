@@ -4,121 +4,185 @@ executors:
   docker-executor:
     docker:
       - image: circleci/python:3.8
+  
   sonar-executor:
     docker:
       - image: sonarsource/sonar-scanner-cli
+  
   dependency-executor:
     docker:
       - image: owasp/dependency-check
+  
   docker-executor-with-privileges:
     docker:
-      - image: circleci/golang
+      - image: cimg/python:3.8-node
     resource_class: medium+
 
 jobs:
-  # Step 1: Build the project
   build:
     executor: docker-executor
     steps:
       - checkout
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "requirements.txt" }}
+            - v1-dependencies-
       - run:
           name: Install Dependencies
           command: pip install -r requirements.txt
+      - save_cache:
+          paths:
+            - ~/.cache/pip
+          key: v1-dependencies-{{ checksum "requirements.txt" }}
       - run:
           name: Build Application
           command: python setup.py install
-
-  # Step 2: Run SonarQube for code analysis
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .
+  
   sonar_scan:
     executor: sonar-executor
     steps:
       - checkout
+      - attach_workspace:
+          at: .
       - run:
           name: Run SonarQube Analysis
           command: |
             sonar-scanner \
-              -Dsonar.projectKey=$SONAR_PROJECT_KEY \
-              -Dsonar.organization=$SONAR_ORG \
-              -Dsonar.host.url=$SONAR_HOST_URL \
-              -Dsonar.login=$SONAR_TOKEN
-
-  # Step 3: Run OWASP Dependency-Check
+              -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+              -Dsonar.organization=${SONAR_ORG} \
+              -Dsonar.host.url=${SONAR_HOST_URL} \
+              -Dsonar.login=${SONAR_TOKEN} \
+              -Dsonar.python.coverage.reportPaths=coverage.xml \
+              -Dsonar.sources=.
+      - persist_to_workspace:
+          root: .
+          paths:
+            - sonar-report.json
+  
   dependency_check:
     executor: dependency-executor
-    working_directory: ~/project
     steps:
       - checkout
+      - attach_workspace:
+          at: .
       - run:
           name: Run OWASP Dependency Check
           command: |
             mkdir -p reports
-            dependency-check --scan ./ --format HTML --out reports/dependency-report.html
-
-  # Step 4: Run Unit Tests
+            dependency-check --scan ./ --format "HTML" --out reports/dependency-report.html --format "JSON" --out reports/dependency-report.json
+      - store_artifacts:
+          path: reports/dependency-report.html
+          destination: dependency-report.html
+      - persist_to_workspace:
+          root: .
+          paths:
+            - reports/dependency-report.html
+            - reports/dependency-report.json
+  
   unit_test:
     executor: docker-executor
     steps:
       - checkout
+      - attach_workspace:
+          at: .
       - run:
           name: Install Test Dependencies
-          command: pip install pytest
+          command: pip install pytest pytest-cov
       - run:
           name: Run Unit Tests
           command: |
             mkdir -p test-reports
-            pytest --junitxml=test-reports/test-report.xml
-
-  # Step 5: Email Reports
-  email_report:
-    docker:
-      - image: alpine
+            pytest tests/ --junitxml=test-reports/test-report.xml --cov=. --cov-report=xml
+      - store_test_results:
+          path: test-reports
+      - store_artifacts:
+          path: test-reports/test-report.xml
+          destination: test-report.xml
+      - store_artifacts:
+          path: coverage.xml
+          destination: coverage.xml
+      - persist_to_workspace:
+          root: .
+          paths:
+            - test-reports
+            - coverage.xml
+  
+  notify:
+    executor: docker-executor
     steps:
       - checkout
+      - attach_workspace:
+          at: .
+      - store_artifacts:
+          path: reports
+          destination: reports
+      - store_artifacts:
+          path: test-reports
+          destination: test-reports
       - run:
-          name: Install Email Dependencies
-          command: apk add --no-cache mailx ssmtp
-      - run:
-          name: Send Email with Reports
+          name: Send Notification
           command: |
-            echo "SonarQube, Dependency-Check, and Unit Test reports attached." | \
-            mail -s "DevSecOps Reports" -a reports/dependency-report.html -a test-reports/test-report.xml recipient@example.com
-
-  # Step 6: Build and Push Docker Image
+            echo "Reports available at:"
+            echo "- Dependency Report: ${CIRCLE_BUILD_URL}/artifacts/reports/dependency-report.html"
+            echo "- Test Report: ${CIRCLE_BUILD_URL}/artifacts/test-reports/test-report.xml"
+            
+            if [ -f test-reports/test-failure ]; then
+              exit 1
+            fi
+  
   docker_build_push:
     executor: docker-executor-with-privileges
     steps:
       - checkout
-      - setup_remote_docker
+      - attach_workspace:
+          at: .
+      - setup_remote_docker:
+          version: 20.10.7
+      - run:
+          name: Extract Project Name
+          command: |
+            PROJECT_NAME=$(python -c "import json; print(json.load(open('package.json'))['name'])")
+            echo "export PROJECT_NAME=$PROJECT_NAME" >> $BASH_ENV
       - run:
           name: Build Docker Image
-          command: docker build -t $DOCKERHUB_USERNAME/your_project .
+          command: |
+            docker build -t ${DOCKERHUB_USERNAME}/${PROJECT_NAME}:${CIRCLE_SHA1} .
+            docker tag ${DOCKERHUB_USERNAME}/${PROJECT_NAME}:${CIRCLE_SHA1} ${DOCKERHUB_USERNAME}/${PROJECT_NAME}:latest
       - run:
           name: Push Docker Image to Docker Hub
           command: |
-            echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-            docker push $DOCKERHUB_USERNAME/your_project
+            echo "${DOCKERHUB_PASSWORD}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+            docker push ${DOCKERHUB_USERNAME}/${PROJECT_NAME}:${CIRCLE_SHA1}
+            docker push ${DOCKERHUB_USERNAME}/${PROJECT_NAME}:latest
 
 workflows:
   version: 2
   build_and_deploy:
     jobs:
       - build
-      - sonar_scan:
-          requires:
-            - build
-      - dependency_check:
-          requires:
-            - build
       - unit_test:
           requires:
             - build
+      - sonar_scan:
+          requires:
+            - unit_test
+      - dependency_check:
+          requires:
+            - build
+      - notify:
+          requires:
+            - sonar_scan
+            - dependency_check
+            - unit_test
       - docker_build_push:
           requires:
             - sonar_scan
             - dependency_check
             - unit_test
-      - email_report:
-          requires:
-            - sonar_scan
-            - dependency_check
-            - unit_test
+          filters:
+            branches:
+              only: main
