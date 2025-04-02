@@ -28,19 +28,27 @@ jobs:
             - v1-dependencies-{{ checksum "requirements.txt" }}
             - v1-dependencies-
       - run:
+          name: Set up Virtual Environment
+          command: |
+            python -m venv venv
+            . venv/bin/activate
+            echo 'source venv/bin/activate' >> $BASH_ENV
+      - run:
           name: Install Dependencies
           command: pip install -r requirements.txt
       - save_cache:
           paths:
+            - ./venv
             - ~/.cache/pip
           key: v1-dependencies-{{ checksum "requirements.txt" }}
       - run:
           name: Build Application
-          command: python setup.py install
+          command: python setup.py install --user
       - persist_to_workspace:
           root: .
           paths:
             - .
+            - venv
   
   sonar_scan:
     executor: sonar-executor
