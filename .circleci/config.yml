@@ -45,12 +45,14 @@ jobs:
   # Step 3: Run OWASP Dependency-Check
   dependency_check:
     executor: dependency-executor
+    working_directory: ~/project
     steps:
       - checkout
       - run:
           name: Run OWASP Dependency Check
           command: |
-            dependency-check --scan ./ --format HTML --out dependency-report.html
+            mkdir -p reports
+            dependency-check --scan ./ --format HTML --out reports/dependency-report.html
 
   # Step 4: Run Unit Tests
   unit_test:
@@ -62,7 +64,9 @@ jobs:
           command: pip install pytest
       - run:
           name: Run Unit Tests
-          command: pytest --junitxml=test-report.xml
+          command: |
+            mkdir -p test-reports
+            pytest --junitxml=test-reports/test-report.xml
 
   # Step 5: Email Reports
   email_report:
@@ -72,12 +76,12 @@ jobs:
       - checkout
       - run:
           name: Install Email Dependencies
-          command: apk add --no-cache mailx
+          command: apk add --no-cache mailx ssmtp
       - run:
           name: Send Email with Reports
           command: |
             echo "SonarQube, Dependency-Check, and Unit Test reports attached." | \
-            mail -s "DevSecOps Reports" -a dependency-report.html -a test-report.xml recipient@example.com
+            mail -s "DevSecOps Reports" -a reports/dependency-report.html -a test-reports/test-report.xml recipient@example.com
 
   # Step 6: Build and Push Docker Image
   docker_build_push:
