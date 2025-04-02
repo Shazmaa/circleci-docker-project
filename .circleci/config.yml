@@ -60,14 +60,12 @@ jobs:
       - run:
           name: Create sonar-project.properties file
           command: |
-            cat > sonar-project.properties << EOF
-            sonar.projectKey=${SONAR_PROJECT_KEY}
-            sonar.organization=${SONAR_ORG}
-            sonar.host.url=https://sonarcloud.io
-            sonar.sources=.
-            sonar.python.coverage.reportPaths=coverage.xml
-            sonar.branch.name=${CIRCLE_BRANCH}
-            EOF
+            echo "sonar.projectKey=${SONAR_PROJECT_KEY}" > sonar-project.properties
+            echo "sonar.organization=${SONAR_ORG}" >> sonar-project.properties
+            echo "sonar.host.url=https://sonarcloud.io" >> sonar-project.properties
+            echo "sonar.sources=." >> sonar-project.properties
+            echo "sonar.python.coverage.reportPaths=coverage.xml" >> sonar-project.properties
+            echo "sonar.branch.name=${CIRCLE_BRANCH}" >> sonar-project.properties
       - run:
           name: Run SonarQube Analysis
           command: |
