@@ -78,7 +78,7 @@ jobs:
           paths:
             - .scannerwork
 
-    dependency_check:
+  dependency_check:
     executor: dependency-executor
     steps:
       - checkout
@@ -103,7 +103,7 @@ jobs:
               --nvdApiKey=${NVD_API_KEY} \
               --failOnCVSS 7 \
               --connectionTimeout 600000
-          no_output_timeout: 30m  # <-- This should be inside the `run` block properly indented
+          no_output_timeout: 30m
       - persist_to_workspace:
           root: .
           paths:
