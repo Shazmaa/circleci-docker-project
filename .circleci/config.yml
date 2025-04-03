@@ -103,7 +103,7 @@ jobs:
               --nvdApiKey=${NVD_API_KEY} \
               --failOnCVSS 7 \
               --connectionTimeout 600000
-        no_output_timeout: 30m
+          no_output_timeout: 30m  # <-- This should be inside the `run` block properly indented
       - persist_to_workspace:
           root: .
           paths:
