@@ -11,7 +11,6 @@ executors:
   
   dependency-executor:
     docker:
-      # Use a base image with Java installed for dependency-check
       - image: cimg/openjdk:17.0
   
   docker-executor-with-privileges:
@@ -42,15 +41,12 @@ jobs:
             - ./venv
             - ~/.cache/pip
           key: v1-dependencies-{{ checksum "requirements.txt" }}
-      - run:
-          name: Build Application
-          command: python setup.py install --user
       - persist_to_workspace:
           root: .
           paths:
             - .
             - venv
-  
+
   sonar_scan:
     executor: sonar-executor
     steps:
@@ -68,19 +64,12 @@ jobs:
             echo "sonar.branch.name=${CIRCLE_BRANCH}" >> sonar-project.properties
       - run:
           name: Run SonarQube Analysis
-          command: |
-            # Create the project in SonarCloud first if it doesn't exist
-            echo "Creating project in SonarCloud if it doesn't exist"
-            curl -X POST -u ${SONAR_TOKEN}: \
-              "https://sonarcloud.io/api/projects/create?project=${SONAR_PROJECT_KEY}&organization=${SONAR_ORG}&name=${SONAR_PROJECT_KEY}"
-            
-            # Run scanner
-            sonar-scanner
+          command: sonar-scanner
       - persist_to_workspace:
           root: .
           paths:
             - .scannerwork
-  
+
   dependency_check:
     executor: dependency-executor
     steps:
@@ -102,16 +91,14 @@ jobs:
             ~/dependency-check/dependency-check/bin/dependency-check.sh \
               --scan ./ \
               --format "HTML" --out reports/dependency-report.html \
-              --format "JSON" --out reports/dependency-report.json
-      - store_artifacts:
-          path: reports/dependency-report.html
-          destination: dependency-report.html
+              --format "JSON" --out reports/dependency-report.json \
+              --nvdApiKey=${NVD_API_KEY}
       - persist_to_workspace:
           root: .
           paths:
             - reports/dependency-report.html
             - reports/dependency-report.json
-  
+
   unit_test:
     executor: docker-executor
     steps:
@@ -126,43 +113,24 @@ jobs:
           command: |
             mkdir -p test-reports
             pytest tests/ --junitxml=test-reports/test-report.xml --cov=. --cov-report=xml
-      - store_test_results:
-          path: test-reports
-      - store_artifacts:
-          path: test-reports/test-report.xml
-          destination: test-report.xml
-      - store_artifacts:
-          path: coverage.xml
-          destination: coverage.xml
       - persist_to_workspace:
           root: .
           paths:
             - test-reports
             - coverage.xml
-  
-  notify:
+
+  email_reports:
     executor: docker-executor
     steps:
       - checkout
       - attach_workspace:
           at: .
-      - store_artifacts:
-          path: reports
-          destination: reports
-      - store_artifacts:
-          path: test-reports
-          destination: test-reports
       - run:
-          name: Send Notification
+          name: Send Email Reports
           command: |
-            echo "Reports available at:"
-            echo "- Dependency Report: ${CIRCLE_BUILD_URL}/artifacts/0/reports/dependency-report.html"
-            echo "- Test Report: ${CIRCLE_BUILD_URL}/artifacts/0/test-reports/test-report.xml"
-            
-            if [ -f test-reports/test-failure ]; then
-              exit 1
-            fi
-  
+            echo "Sending Reports via Email..."
+            echo "SonarQube Report, Dependency Check Report, and Unit Test Report" | mail -s "Build Reports" ${EMAIL_RECIPIENT}
+
   docker_build_push:
     executor: docker-executor-with-privileges
     steps:
@@ -171,15 +139,6 @@ jobs:
           at: .
       - setup_remote_docker:
           version: 20.10.7
-      - run:
-          name: Extract Project Name
-          command: |
-            if [ -f package.json ]; then
-              PROJECT_NAME=$(python -c "import json; print(json.load(open('package.json'))['name'])")
-            else
-              PROJECT_NAME=$(basename $PWD)
-            fi
-            echo "export PROJECT_NAME=$PROJECT_NAME" >> $BASH_ENV
       - run:
           name: Build Docker Image
           command: |
@@ -206,7 +165,7 @@ workflows:
       - dependency_check:
           requires:
             - build
-      - notify:
+      - email_reports:
           requires:
             - sonar_scan
             - dependency_check
