@@ -120,16 +120,14 @@ jobs:
           name: Run Unit Tests
           command: |
             . venv/bin/activate
-            pytest --junitxml=reports/unit-test-results.xml
+            pytest tests/ --junitxml=reports/unit-test-results.xml
       - persist_to_workspace:
           root: .
           paths:
             - reports/unit-test-results.xml
 
   docker_build:
-    executor:
-      name: docker-executor-with-privileges
-      docker_layer_caching: true
+    executor: docker-executor-with-privileges
     steps:
       - checkout
       - attach_workspace:
@@ -162,13 +160,13 @@ jobs:
               echo "SonarQube, Dependency Check, and Unit Test Reports Attached." >> email.txt
               echo "--------------------------------------" >> email.txt
               echo "SonarQube Results:" >> email.txt
-              cat reports/sonarqube-report.txt >> email.txt || echo "SonarQube report not found."
+              cat reports/sonarqube-report.txt >> email.txt
               echo "--------------------------------------" >> email.txt
               echo "Dependency Check Results:" >> email.txt
-              cat reports/dependency-report.json >> email.txt || echo "Dependency report not found."
+              cat reports/dependency-report.json >> email.txt
               echo "--------------------------------------" >> email.txt
               echo "Unit Test Results:" >> email.txt
-              cat reports/unit-test-results.xml >> email.txt || echo "Unit test report not found."
+              cat reports/unit-test-results.xml >> email.txt
               mail -s "CI/CD Pipeline Report" "${EMAIL_RECIPIENT}" < email.txt
             else
               echo "EMAIL_RECIPIENT is not set. Skipping email report."
