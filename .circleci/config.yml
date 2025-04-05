@@ -114,26 +114,39 @@ jobs:
           at: .
       - setup_remote_docker:
           version: 20.10.14
+          docker_layer_caching: true
+      - run:
+          name: Validate Docker Environment
+          command: |
+            docker --version
+            docker info || { echo "Docker daemon not accessible"; exit 1; }
       - run:
           name: Build Docker image
           command: |
+            echo "Building Docker image..."
             if [ -f Dockerfile ]; then
               docker build -t ${DOCKERHUB_USER}/your-app:${CIRCLE_SHA1} .
             else
-              echo "No Dockerfile found, creating a dummy one for demo purposes"
-              echo "FROM alpine:latest" > Dockerfile
-              echo "CMD ['echo', 'Hello World']" >> Dockerfile
-              docker build -t ${DOCKERHUB_USER}/your-app:${CIRCLE_SHA1} .
+              echo "❌ Dockerfile not found! Aborting build."
+              exit 1
             fi
       - run:
           name: Push Docker image to Docker Hub
           command: |
-            if [ -n "${DOCKERHUB_USER}" ] && [ -n "${DOCKERHUB_PASS}" ]; then
-              echo "${DOCKERHUB_PASS}" | docker login -u "${DOCKERHUB_USER}" --password-stdin
-              docker push ${DOCKERHUB_USER}/your-app:${CIRCLE_SHA1}
-            else
-              echo "Docker Hub credentials not set, skipping push"
+            if [ -z "${DOCKERHUB_USER}" ] || [ -z "${DOCKERHUB_PASS}" ]; then
+              echo "❌ Docker credentials not set. Skipping push."
+              exit 1
             fi
+
+            echo "${DOCKERHUB_PASS}" | docker login -u "${DOCKERHUB_USER}" --password-stdin || {
+              echo "❌ Docker login failed";
+              exit 1;
+            }
+
+            echo "Pushing image to Docker Hub..."
+            docker push ${DOCKERHUB_USER}/your-app:${CIRCLE_SHA1}
+
+      
 
   send-email:
     executor: docker-executor
