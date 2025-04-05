@@ -49,7 +49,6 @@ jobs:
             which java
             ls -la $(dirname $(which java))
             ls -la $(dirname $(dirname $(which java)))
-            # Set the correct JAVA_HOME based on the actual location
             echo 'export JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))' >> $BASH_ENV
             source $BASH_ENV
             echo "Updated JAVA_HOME: $JAVA_HOME"
@@ -106,48 +105,34 @@ jobs:
           paths:
             - test-results
 
-docker-build-push:
-  docker:
-    - image: cimg/base:2023.03
-  steps:
-    - attach_workspace:
-        at: .
-    - setup_remote_docker:
-        version: 20.10.14
-    - run:
-        name: Debug Environment
-        command: |
-          echo "Checking environment..."
-          echo "DOCKERHUB_USER is ${DOCKERHUB_USER:+set}"
-          echo "DOCKERHUB_PASS is ${DOCKERHUB_PASS:+set}"
-          echo "CIRCLE_SHA1 is ${CIRCLE_SHA1:+set}"
-          docker info || echo "Docker info command failed"
-    - run:
-        name: Build Docker image
-        command: |
-          set -x
-          if [ -f Dockerfile ]; then
-            echo "Building from existing Dockerfile"
-            docker build -t ${DOCKERHUB_USER:-demo}/your-app:${CIRCLE_SHA1:-latest} . || echo "Docker build failed with exit code $?"
-          else
-            echo "No Dockerfile found, creating a dummy one for demo purposes"
-            echo "FROM alpine:latest" > Dockerfile
-            echo "CMD ['echo', 'Hello World']" >> Dockerfile
-            docker build -t ${DOCKERHUB_USER:-demo}/your-app:${CIRCLE_SHA1:-latest} . || echo "Docker build failed with exit code $?"
-          fi
-          docker images
-    - run:
-        name: Push Docker image to Docker Hub
-        command: |
-          set -x
-          if [ -n "${DOCKERHUB_USER}" ] && [ -n "${DOCKERHUB_PASS}" ]; then
-            echo "Attempting Docker Hub login..."
-            echo "${DOCKERHUB_PASS}" | docker login -u "${DOCKERHUB_USER}" --password-stdin || echo "Docker login failed with exit code $?"
-            echo "Attempting to push image..."
-            docker push ${DOCKERHUB_USER}/your-app:${CIRCLE_SHA1:-latest} || echo "Docker push failed with exit code $?"
-          else
-            echo "Docker Hub credentials not set, skipping push"
-          fi
+  build-and-push:
+    docker:
+      - image: cimg/base:2023.03
+    steps:
+      - attach_workspace:
+          at: .
+      - setup_remote_docker:
+          version: 20.10.14
+      - run:
+          name: Build Docker image
+          command: |
+            if [ -f Dockerfile ]; then
+              docker build -t ${DOCKERHUB_USER}/your-app:${CIRCLE_SHA1} .
+            else
+              echo "No Dockerfile found, creating a dummy one for demo purposes"
+              echo "FROM alpine:latest" > Dockerfile
+              echo "CMD ['echo', 'Hello World']" >> Dockerfile
+              docker build -t ${DOCKERHUB_USER}/your-app:${CIRCLE_SHA1} .
+            fi
+      - run:
+          name: Push Docker image to Docker Hub
+          command: |
+            if [ -n "${DOCKERHUB_USER}" ] && [ -n "${DOCKERHUB_PASS}" ]; then
+              echo "${DOCKERHUB_PASS}" | docker login -u "${DOCKERHUB_USER}" --password-stdin
+              docker push ${DOCKERHUB_USER}/your-app:${CIRCLE_SHA1}
+            else
+              echo "Docker Hub credentials not set, skipping push"
+            fi
 
   send-email:
     executor: docker-executor
@@ -187,11 +172,11 @@ workflows:
       - unit-tests:
           requires:
             - checkout-code
-      - docker-build-push:
+      - build-and-push:
           requires:
             - unit-tests
             - dependency-check
             - sonar-analysis
       - send-email:
           requires:
-            - docker-build-push
+            - build-and-push
