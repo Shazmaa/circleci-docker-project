@@ -108,46 +108,36 @@ jobs:
 
   docker-build-push:
     docker:
-      - image: cimg/base:2023.03
+      - image: cimg/python:3.11  # Has bash + curl + can install docker
     steps:
       - attach_workspace:
           at: .
       - setup_remote_docker:
           version: 20.10.14
       - run:
-          name: Verify Docker installation
+          name: Install Docker CLI
           command: |
-            docker --version || { echo "Docker not found"; exit 1; }
+            sudo apt-get update
+            sudo apt-get install -y docker.io
+            docker --version
       - run:
-          name: Check Docker credentials
+          name: Log in to Docker Hub
           command: |
-            if [ -z "${DOCKERHUB_USER}" ] || [ -z "${DOCKERHUB_PASS}" ]; then
-              echo "Docker Hub credentials not set in environment variables"
-              exit 1
-            else
-              echo "${DOCKERHUB_PASS}" | docker login -u "${DOCKERHUB_USER}" --password-stdin || {
-                echo "Docker login failed"
-                exit 1
-              }
-            fi
+            echo "${DOCKERHUB_PASS}" | docker login -u "${DOCKERHUB_USER}" --password-stdin
       - run:
           name: Build Docker image
           command: |
             if [ -f Dockerfile ]; then
               docker build -t ${DOCKERHUB_USER}/your-app:${CIRCLE_SHA1} .
             else
-              echo "No Dockerfile found, creating a dummy one for demo purposes"
               echo "FROM alpine:latest" > Dockerfile
-              echo "CMD [\"echo\", \"Hello World\"]" >> Dockerfile
+              echo 'CMD ["echo", "Hello World"]' >> Dockerfile
               docker build -t ${DOCKERHUB_USER}/your-app:${CIRCLE_SHA1} .
             fi
       - run:
-          name: Push Docker image to Docker Hub
+          name: Push Docker image
           command: |
-            docker push ${DOCKERHUB_USER}/your-app:${CIRCLE_SHA1} || {
-              echo "Docker push failed"
-              exit 1
-            }
+            docker push ${DOCKERHUB_USER}/your-app:${CIRCLE_SHA1}
 
   send-email:
     executor: docker-executor
