@@ -112,7 +112,7 @@ jobs:
       - attach_workspace:
           at: .
       - setup_remote_docker:
-          version: 20.10.14
+          # Removed specific Docker version as per error message
       - run:
           name: Build Docker image
           command: |
