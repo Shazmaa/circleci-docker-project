@@ -1,55 +1,84 @@
 version: 2.1
 
 executors:
-  docker-executor:
+  python-executor:
     docker:
-      - image: cimg/python:3.11  # or change this to match your tech stack
+      - image: cimg/python:3.11
+    environment:
+      ODC_VERSION: 8.4.0
+
+  sonar-executor:
+    docker:
+      - image: sonarsource/sonar-scanner-cli:latest
+    environment:
+      SONAR_SCANNER_OPTS: -Xmx2048m
 
 jobs:
   checkout-code:
-    executor: docker-executor
+    executor: python-executor
     steps:
       - checkout
+      - run:
+          name: Install basic dependencies
+          command: |
+            sudo apt-get update && sudo apt-get install -y unzip
 
   sonar-analysis:
-    executor: docker-executor
+    executor: sonar-executor
     steps:
       - checkout
       - run:
           name: Run SonarQube Scan
           command: |
             sonar-scanner \
-              -Dsonar.projectKey=your-project-key \
+              -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
               -Dsonar.sources=. \
+              -Dsonar.exclusions=**/venv/**,**/node_modules/**,**/.scannerwork/** \
               -Dsonar.host.url=${SONAR_HOST_URL} \
-              -Dsonar.login=${SONAR_TOKEN}
+              -Dsonar.token=${SONAR_TOKEN} \
+              -Dsonar.python.version=3.11 \
+              -Dsonar.python.coverage.reportPaths=coverage.xml
 
   dependency-check:
-    executor: docker-executor
+    executor: python-executor
     steps:
       - checkout
       - run:
-          name: Run OWASP Dependency Check
+          name: Download OWASP Dependency Check
+          command: |
+            wget https://github.com/jeremylong/DependencyCheck/releases/download/v${ODC_VERSION}/dependency-check-${ODC_VERSION}-release.zip
+            unzip dependency-check-${ODC_VERSION}-release.zip -d /opt
+            chmod +x /opt/dependency-check/bin/dependency-check.sh
+      - run:
+          name: Run Dependency Check
           command: |
             mkdir -p odc-reports
-            dependency-check.sh \
-              --project "MyApp" \
+            /opt/dependency-check/bin/dependency-check.sh \
+              --project "${CIRCLE_PROJECT_REPONAME}" \
               --scan . \
               --out odc-reports \
-              --format "HTML"
+              --format "HTML" \
+              --enableExperimental \
+              --failOnCVSS 7 \
+              --noupdate
 
   unit-tests:
-    executor: docker-executor
+    executor: python-executor
     steps:
       - checkout
       - run:
           name: Install dependencies
           command: |
-            pip install -r requirements.txt
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt pytest pytest-cov
       - run:
-          name: Run Unit Tests
+          name: Run Unit Tests with Coverage
           command: |
-            pytest > test-results.txt
+            pytest --cov=./ --cov-report=xml:coverage.xml > test-results.txt
+      - store_artifacts:
+          path: coverage.xml
+      - store_artifacts:
+          path: test-results.txt
 
   docker-build-push:
     docker:
@@ -60,41 +89,45 @@ jobs:
       - run:
           name: Build Docker image
           command: |
-            docker build -t your-dockerhub-username/your-app:latest .
+            docker build -t ${DOCKERHUB_USERNAME}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1:0:7} .
       - run:
           name: Push Docker image to Docker Hub
           command: |
-            echo "${DOCKERHUB_PASS}" | docker login -u "${DOCKERHUB_USER}" --password-stdin
-            docker push your-dockerhub-username/your-app:latest
+            echo "${DOCKERHUB_PASS}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+            docker push ${DOCKERHUB_USERNAME}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1:0:7}
 
-  send-email:
-    executor: docker-executor
+  send-notification:
+    executor: python-executor
     steps:
       - checkout
+      - attach_workspace:
+          at: /tmp/workspace
       - run:
-          name: Send Security Reports via Email
+          name: Send Slack Notification
           command: |
-            apt-get update && apt-get install -y mailutils
-            echo "Security Reports attached." | mail -s "DevSecOps Report" -A odc-reports/dependency-check-report.html -A test-results.txt your-email@example.com
+            curl -X POST -H 'Content-type: application/json' \
+            --data '{"text":"Pipeline completed for ${CIRCLE_PROJECT_REPONAME}\n- SonarQube Report: ${SONAR_HOST_URL}/dashboard?id=${SONAR_PROJECT_KEY}\n- Docker Image: ${DOCKERHUB_USERNAME}/${CIRCLE_PROJECT_REPONAME}:${CIRCLE_SHA1:0:7}"}' \
+            ${SLACK_WEBHOOK_URL}
 
 workflows:
   devsecops-pipeline:
     jobs:
       - checkout-code
-      - sonar-analysis:
+      - unit-tests:
           requires:
             - checkout-code
       - dependency-check:
           requires:
             - checkout-code
-      - unit-tests:
+      - sonar-analysis:
           requires:
             - checkout-code
+            - unit-tests
       - docker-build-push:
           requires:
             - unit-tests
             - dependency-check
             - sonar-analysis
-      - send-email:
+      - send-notification:
           requires:
             - docker-build-push
