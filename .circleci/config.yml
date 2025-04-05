@@ -3,197 +3,98 @@ version: 2.1
 executors:
   docker-executor:
     docker:
-      - image: cimg/python:3.8
-
-  sonar-executor:
-    docker:
-      - image: sonarsource/sonar-scanner-cli:latest
-
-  dependency-executor:
-    docker:
-      - image: cimg/openjdk:17.0
-
-  docker-executor-with-privileges:
-    docker:
-      - image: cimg/python:3.8-node
-    resource_class: medium+
+      - image: cimg/python:3.11  # or change this to match your tech stack
 
 jobs:
-  build:
+  checkout-code:
     executor: docker-executor
     steps:
       - checkout
-      - restore_cache:
-          keys:
-            - v1-dependencies-{{ checksum "requirements.txt" }}
-            - v1-dependencies-
-      - run:
-          name: Set up Virtual Environment
-          command: |
-            python -m venv venv
-            . venv/bin/activate
-            echo 'source venv/bin/activate' >> $BASH_ENV
-      - run:
-          name: Install Dependencies
-          command: pip install -r requirements.txt
-      - save_cache:
-          paths:
-            - ./venv
-            - ~/.cache/pip
-          key: v1-dependencies-{{ checksum "requirements.txt" }}
-      - persist_to_workspace:
-          root: .
-          paths:
-            - .
-            - venv
 
-  sonar_scan:
-    executor: sonar-executor
+  sonar-analysis:
+    executor: docker-executor
     steps:
       - checkout
-      - attach_workspace:
-          at: .
       - run:
-          name: Create sonar-project.properties file
+          name: Run SonarQube Scan
           command: |
-            echo "sonar.projectKey=${SONAR_PROJECT_KEY}" > sonar-project.properties
-            echo "sonar.organization=${SONAR_ORG}" >> sonar-project.properties
-            echo "sonar.host.url=https://sonarcloud.io" >> sonar-project.properties
-            echo "sonar.sources=." >> sonar-project.properties
-            echo "sonar.python.coverage.reportPaths=coverage.xml" >> sonar-project.properties
-            echo "sonar.branch.name=${CIRCLE_BRANCH}" >> sonar-project.properties
-            echo "Contents of sonar-project.properties:"
-            cat sonar-project.properties
-      - run:
-          name: Run SonarQube Analysis
-          command: |
-            if [ -n "${SONAR_TOKEN}" ]; then
-              sonar-scanner -Dsonar.login=${SONAR_TOKEN}
-            else
-              echo "SONAR_TOKEN environment variable is not set. Skipping SonarQube scan."
-              exit 1
-            fi
-      - persist_to_workspace:
-          root: .
-          paths:
-            - .scannerwork
+            sonar-scanner \
+              -Dsonar.projectKey=your-project-key \
+              -Dsonar.sources=. \
+              -Dsonar.host.url=${SONAR_HOST_URL} \
+              -Dsonar.login=${SONAR_TOKEN}
 
-  dependency_check:
-    executor: dependency-executor
+  dependency-check:
+    executor: docker-executor
     steps:
       - checkout
-      - attach_workspace:
-          at: .
-      - run:
-          name: Install Dependency-Check
-          command: |
-            mkdir -p ~/dependency-check
-            cd ~/dependency-check
-            wget https://github.com/jeremylong/DependencyCheck/releases/download/v9.0.5/dependency-check-9.0.5-release.zip
-            unzip dependency-check-9.0.5-release.zip
-            chmod +x ~/dependency-check/dependency-check/bin/dependency-check.sh
       - run:
           name: Run OWASP Dependency Check
           command: |
-            mkdir -p reports
-            ~/dependency-check/dependency-check/bin/dependency-check.sh \
-              --scan ./ \
-              --format "HTML" --out reports/dependency-report.html \
-              --format "JSON" --out reports/dependency-report.json \
-              --nvdApiKey=${NVD_API_KEY} \
-              --failOnCVSS 7 \
-              --connectionTimeout 600000
-          no_output_timeout: 30m
-      - persist_to_workspace:
-          root: .
-          paths:
-            - reports/dependency-report.html
-            - reports/dependency-report.json
+            mkdir -p odc-reports
+            dependency-check.sh \
+              --project "MyApp" \
+              --scan . \
+              --out odc-reports \
+              --format "HTML"
 
-  unit_tests:
+  unit-tests:
     executor: docker-executor
     steps:
       - checkout
-      - attach_workspace:
-          at: .
+      - run:
+          name: Install dependencies
+          command: |
+            pip install -r requirements.txt
       - run:
           name: Run Unit Tests
           command: |
-            . venv/bin/activate
-            pytest tests/ --junitxml=reports/unit-test-results.xml
-      - persist_to_workspace:
-          root: .
-          paths:
-            - reports/unit-test-results.xml
+            pytest > test-results.txt
 
-  docker_build:
-    executor: docker-executor-with-privileges
+  docker-build-push:
+    docker:
+      - image: cimg/base:stable
     steps:
       - checkout
-      - attach_workspace:
-          at: .
+      - setup_remote_docker
       - run:
-          name: Build Docker Image
+          name: Build Docker image
           command: |
-            docker build -t ${DOCKERHUB_USERNAME}/${PROJECT_NAME}:latest .
+            docker build -t your-dockerhub-username/your-app:latest .
       - run:
-          name: Push to Docker Hub
+          name: Push Docker image to Docker Hub
           command: |
-            echo "${DOCKERHUB_PASSWORD}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
-            docker push ${DOCKERHUB_USERNAME}/${PROJECT_NAME}:latest
+            echo "${DOCKERHUB_PASS}" | docker login -u "${DOCKERHUB_USER}" --password-stdin
+            docker push your-dockerhub-username/your-app:latest
 
-  email_reports:
+  send-email:
     executor: docker-executor
     steps:
       - checkout
-      - attach_workspace:
-          at: .
       - run:
-          name: Install Mail Utilities
-          command: sudo apt-get update && sudo apt-get install -y mailutils
-      - run:
-          name: Send Email Report
+          name: Send Security Reports via Email
           command: |
-            if [ -n "${EMAIL_RECIPIENT}" ]; then
-              echo "Sending reports to ${EMAIL_RECIPIENT}..."
-              echo "Subject: CI/CD Report" > email.txt
-              echo "SonarQube, Dependency Check, and Unit Test Reports Attached." >> email.txt
-              echo "--------------------------------------" >> email.txt
-              echo "SonarQube Results:" >> email.txt
-              cat reports/sonarqube-report.txt >> email.txt
-              echo "--------------------------------------" >> email.txt
-              echo "Dependency Check Results:" >> email.txt
-              cat reports/dependency-report.json >> email.txt
-              echo "--------------------------------------" >> email.txt
-              echo "Unit Test Results:" >> email.txt
-              cat reports/unit-test-results.xml >> email.txt
-              mail -s "CI/CD Pipeline Report" "${EMAIL_RECIPIENT}" < email.txt
-            else
-              echo "EMAIL_RECIPIENT is not set. Skipping email report."
-              exit 1
-            fi
+            apt-get update && apt-get install -y mailutils
+            echo "Security Reports attached." | mail -s "DevSecOps Report" -A odc-reports/dependency-check-report.html -A test-results.txt your-email@example.com
 
 workflows:
-  version: 2
-  build_and_deploy:
+  devsecops-pipeline:
     jobs:
-      - build
-      - sonar_scan:
+      - checkout-code
+      - sonar-analysis:
           requires:
-            - build
-      - dependency_check:
+            - checkout-code
+      - dependency-check:
           requires:
-            - build
-      - unit_tests:
+            - checkout-code
+      - unit-tests:
           requires:
-            - build
-      - docker_build:
+            - checkout-code
+      - docker-build-push:
           requires:
-            - sonar_scan
-            - dependency_check
-            - unit_tests
-      - email_reports:
+            - unit-tests
+            - dependency-check
+            - sonar-analysis
+      - send-email:
           requires:
-            - sonar_scan
-            - dependency_check
-            - unit_tests
+            - docker-build-push
