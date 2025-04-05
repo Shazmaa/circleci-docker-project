@@ -111,9 +111,8 @@ jobs:
     steps:
       - attach_workspace:
           at: .
-      # Removed specific Docker version as per error message
-      - setup_remote_docker
-
+      - setup_remote_docker:
+          # Removed specific Docker version as per error message
       - run:
           name: Build Docker image
           command: |
@@ -141,20 +140,31 @@ jobs:
       - attach_workspace:
           at: .
       - run:
-          name: Install mail utilities
+          name: Install msmtp
           command: |
-            sudo apt-get update && sudo apt-get install -y mailutils
+            sudo apt-get update
+            sudo apt-get install -y msmtp msmtp-mta
+      - run:
+          name: Configure Gmail SMTP
+          command: |
+            echo "account default" > ~/.msmtprc
+            echo "host smtp.gmail.com" >> ~/.msmtprc
+            echo "port 587" >> ~/.msmtprc
+            echo "from ${GMAIL_USER}" >> ~/.msmtprc
+            echo "user ${GMAIL_USER}" >> ~/.msmtprc
+            echo "password ${GMAIL_PASSWORD}" >> ~/.msmtprc
+            echo "tls on" >> ~/.msmtprc
+            echo "tls_trust_file /etc/ssl/certs/ca-certificates.crt" >> ~/.msmtprc
+            chmod 600 ~/.msmtprc
       - run:
           name: Send Security Reports via Email
           command: |
             if [ -n "${NOTIFICATION_EMAIL}" ]; then
               if [ -f odc-reports/dependency-check-report.html ]; then
-                echo "Security Reports attached." | mail -s "DevSecOps Report" \
-                  -A odc-reports/dependency-check-report.html \
-                  -A test-results/test-summary.txt ${NOTIFICATION_EMAIL}
+                echo "Security Reports attached." | msmtp -s "DevSecOps Report" ${NOTIFICATION_EMAIL} < odc-reports/dependency-check-report.html
               else
                 echo "No reports found to send"
-                echo "Security scan completed but no reports found." | mail -s "DevSecOps Report" ${NOTIFICATION_EMAIL}
+                echo "Security scan completed but no reports found." | msmtp -s "DevSecOps Report" ${NOTIFICATION_EMAIL}
               fi
             else
               echo "No email address configured, skipping notification"
