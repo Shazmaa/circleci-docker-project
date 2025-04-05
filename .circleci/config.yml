@@ -111,8 +111,9 @@ jobs:
     steps:
       - attach_workspace:
           at: .
-      - setup_remote_docker:
-          # Removed specific Docker version as per error message
+      # Removed specific Docker version as per error message
+      - setup_remote_docker
+
       - run:
           name: Build Docker image
           command: |
