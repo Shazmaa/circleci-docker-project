@@ -3,7 +3,7 @@ version: 2.1
 executors:
   docker-executor:
     docker:
-      - image: cimg/openjdk:17.0.7-node
+      - image: cimg/openjdk:17.0.7
 
 jobs:
   checkout-code:
@@ -30,7 +30,6 @@ jobs:
       - run:
           name: Run SonarQube Scan
           command: |
-            # Run with explicit organization parameter
             sonar-scanner \
               -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
               -Dsonar.organization=${SONAR_ORG} \
@@ -44,22 +43,28 @@ jobs:
       - attach_workspace:
           at: .
       - run:
+          name: Find Java home location
+          command: |
+            echo "Current JAVA_HOME: $JAVA_HOME"
+            which java
+            ls -la $(dirname $(which java))
+            ls -la $(dirname $(dirname $(which java)))
+            # Set the correct JAVA_HOME based on the actual location
+            echo 'export JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))' >> $BASH_ENV
+            source $BASH_ENV
+            echo "Updated JAVA_HOME: $JAVA_HOME"
+      - run:
           name: Install Dependency Check
           command: |
-            # Create directory for dependency-check
             mkdir -p ~/tools
-            # Download dependency-check
             wget -q https://github.com/jeremylong/DependencyCheck/releases/download/v8.4.0/dependency-check-8.4.0-release.zip
-            # Unzip to tools directory
             unzip -q dependency-check-8.4.0-release.zip -d ~/tools
-            # Make sure script is executable
             chmod +x ~/tools/dependency-check/bin/dependency-check.sh
       - run:
           name: Run OWASP Dependency Check
           command: |
             mkdir -p odc-reports
-            # Set JAVA_HOME explicitly and run dependency check
-            export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+            echo "Using JAVA_HOME: $JAVA_HOME"
             ~/tools/dependency-check/bin/dependency-check.sh \
               --project "MyApp" \
               --scan . \
@@ -112,7 +117,6 @@ jobs:
       - run:
           name: Build Docker image
           command: |
-            # Only build if Dockerfile exists
             if [ -f Dockerfile ]; then
               docker build -t ${DOCKERHUB_USER}/your-app:${CIRCLE_SHA1} .
             else
