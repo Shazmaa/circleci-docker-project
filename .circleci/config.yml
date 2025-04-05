@@ -4,20 +4,19 @@ executors:
   docker-executor:
     docker:
       - image: cimg/python:3.8
-  
+
   sonar-executor:
     docker:
       - image: sonarsource/sonar-scanner-cli:latest
-  
+
   dependency-executor:
     docker:
       - image: cimg/openjdk:17.0
-  
+
   docker-executor-with-privileges:
     docker:
       - image: cimg/python:3.8-node
     resource_class: medium+
-    docker_layer_caching: true
 
 jobs:
   build:
@@ -63,6 +62,7 @@ jobs:
             echo "sonar.sources=." >> sonar-project.properties
             echo "sonar.python.coverage.reportPaths=coverage.xml" >> sonar-project.properties
             echo "sonar.branch.name=${CIRCLE_BRANCH}" >> sonar-project.properties
+            echo "Contents of sonar-project.properties:"
             cat sonar-project.properties
       - run:
           name: Run SonarQube Analysis
@@ -73,22 +73,10 @@ jobs:
               echo "SONAR_TOKEN environment variable is not set. Skipping SonarQube scan."
               exit 1
             fi
-      - run:
-          name: Save SonarQube Summary
-          command: |
-            mkdir -p reports
-            echo "SonarQube analysis summary (see detailed results on SonarCloud):" > reports/sonarqube-report.txt
-            echo "Project: ${SONAR_PROJECT_KEY}" >> reports/sonarqube-report.txt
-            echo "Branch: ${CIRCLE_BRANCH}" >> reports/sonarqube-report.txt
-            echo "Dashboard: https://sonarcloud.io/dashboard?id=${SONAR_PROJECT_KEY}" >> reports/sonarqube-report.txt
       - persist_to_workspace:
           root: .
           paths:
             - .scannerwork
-            - reports/sonarqube-report.txt
-      - store_artifacts:
-          path: reports
-          destination: sonar_reports
 
   dependency_check:
     executor: dependency-executor
@@ -121,9 +109,6 @@ jobs:
           paths:
             - reports/dependency-report.html
             - reports/dependency-report.json
-      - store_artifacts:
-          path: reports
-          destination: dependency_reports
 
   unit_tests:
     executor: docker-executor
@@ -140,12 +125,11 @@ jobs:
           root: .
           paths:
             - reports/unit-test-results.xml
-      - store_artifacts:
-          path: reports
-          destination: unit_test_reports
 
   docker_build:
-    executor: docker-executor-with-privileges
+    executor:
+      name: docker-executor-with-privileges
+      docker_layer_caching: true
     steps:
       - checkout
       - attach_workspace:
@@ -167,27 +151,29 @@ jobs:
       - attach_workspace:
           at: .
       - run:
-          name: Prepare and Print Email Report
+          name: Install Mail Utilities
+          command: sudo apt-get update && sudo apt-get install -y mailutils
+      - run:
+          name: Send Email Report
           command: |
             if [ -n "${EMAIL_RECIPIENT}" ]; then
-              echo "CI/CD Report for ${CIRCLE_PROJECT_REPONAME}" > reports/final-report.txt
-              echo "--------------------------------------" >> reports/final-report.txt
-              echo "SonarQube Results Summary:" >> reports/final-report.txt
-              cat reports/sonarqube-report.txt >> reports/final-report.txt
-              echo "--------------------------------------" >> reports/final-report.txt
-              echo "Dependency Check Summary:" >> reports/final-report.txt
-              cat reports/dependency-report.json | head -n 50 >> reports/final-report.txt
-              echo "--------------------------------------" >> reports/final-report.txt
-              echo "Unit Test Results Summary:" >> reports/final-report.txt
-              cat reports/unit-test-results.xml | head -n 50 >> reports/final-report.txt
-              cat reports/final-report.txt
+              echo "Sending reports to ${EMAIL_RECIPIENT}..."
+              echo "Subject: CI/CD Report" > email.txt
+              echo "SonarQube, Dependency Check, and Unit Test Reports Attached." >> email.txt
+              echo "--------------------------------------" >> email.txt
+              echo "SonarQube Results:" >> email.txt
+              cat reports/sonarqube-report.txt >> email.txt || echo "SonarQube report not found."
+              echo "--------------------------------------" >> email.txt
+              echo "Dependency Check Results:" >> email.txt
+              cat reports/dependency-report.json >> email.txt || echo "Dependency report not found."
+              echo "--------------------------------------" >> email.txt
+              echo "Unit Test Results:" >> email.txt
+              cat reports/unit-test-results.xml >> email.txt || echo "Unit test report not found."
+              mail -s "CI/CD Pipeline Report" "${EMAIL_RECIPIENT}" < email.txt
             else
               echo "EMAIL_RECIPIENT is not set. Skipping email report."
               exit 1
             fi
-      - store_artifacts:
-          path: reports/final-report.txt
-          destination: final_report
 
 workflows:
   version: 2
