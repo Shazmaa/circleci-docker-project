@@ -107,37 +107,38 @@ jobs:
             - test-results
 
   docker-build-push:
-    docker:
-      - image: cimg/python:3.11  # Has bash + curl + can install docker
-    steps:
-      - attach_workspace:
-          at: .
-      - setup_remote_docker:
-          version: 20.10.14
-      - run:
-          name: Install Docker CLI
-          command: |
-            sudo apt-get update
-            sudo apt-get install -y docker.io
-            docker --version
-      - run:
-          name: Log in to Docker Hub
-          command: |
-            echo "${DOCKERHUB_PASS}" | docker login -u "${DOCKERHUB_USER}" --password-stdin
-      - run:
-          name: Build Docker image
-          command: |
-            if [ -f Dockerfile ]; then
-              docker build -t ${DOCKERHUB_USER}/your-app:${CIRCLE_SHA1} .
-            else
-              echo "FROM alpine:latest" > Dockerfile
-              echo 'CMD ["echo", "Hello World"]' >> Dockerfile
-              docker build -t ${DOCKERHUB_USER}/your-app:${CIRCLE_SHA1} .
-            fi
-      - run:
-          name: Push Docker image
-          command: |
-            docker push ${DOCKERHUB_USER}/your-app:${CIRCLE_SHA1}
+  executor: docker-executor  # Use the same executor as other jobs
+  steps:
+    - attach_workspace:
+        at: .
+    - setup_remote_docker:
+        version: 20.10.14
+    - run:
+        name: Install Docker CLI
+        command: |
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+          docker --version
+    - run:
+        name: Log in to Docker Hub
+        command: |
+          echo "${DOCKERHUB_PASS}" | docker login -u "${DOCKERHUB_USER}" --password-stdin
+    - run:
+        name: Build Docker image
+        command: |
+          if [ -f Dockerfile ]; then
+            docker build -t ${DOCKERHUB_USER}/your-app:${CIRCLE_SHA1} .
+          else
+            echo "FROM alpine:latest" > Dockerfile
+            echo 'CMD ["echo", "Hello World"]' >> Dockerfile
+            docker build -t ${DOCKERHUB_USER}/your-app:${CIRCLE_SHA1} .
+          fi
+    - run:
+        name: Push Docker image
+        command: |
+          docker push ${DOCKERHUB_USER}/your-app:${CIRCLE_SHA1}
 
   send-email:
     executor: docker-executor
