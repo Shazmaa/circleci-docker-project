@@ -111,8 +111,14 @@ jobs:
     steps:
       - attach_workspace:
           at: .
-      # Removed specific Docker version as per error message
       - setup_remote_docker
+
+      # Debug step to check DockerHub credentials
+      - run:
+          name: Debug DockerHub Env Vars (TEMP)
+          command: |
+            echo "DOCKERHUB_USER: ${DOCKERHUB_USER}"
+            echo "DOCKERHUB_PASS length: ${#DOCKERHUB_PASS}"
 
       - run:
           name: Build Docker image
